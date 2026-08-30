@@ -1,0 +1,27 @@
+"""Configuración central. Todo se puede sobreescribir por variable de entorno."""
+import os
+
+MQTT_HOST = os.getenv("RTLS_MQTT_HOST", "localhost")
+MQTT_PORT = int(os.getenv("RTLS_MQTT_PORT", "1883"))
+
+# Topic donde la pasarela publica ciclos de distancias (ver README):
+TOPIC_RANGES = os.getenv("RTLS_TOPIC_RANGES", "rtls/ranges")
+# Topic donde el motor publica posiciones calculadas: rtls/positions/<tag_id>
+TOPIC_POSITIONS = os.getenv("RTLS_TOPIC_POSITIONS", "rtls/positions")
+
+DATABASE_URL = os.getenv(
+    "RTLS_DATABASE_URL",
+    "postgresql://rtls:rtls@localhost:5432/rtls",
+)
+
+# Motor de posicionamiento
+# Ventana temporal (s) para agrupar rangos de un tag antes de trilaterar
+RANGE_WINDOW_S = float(os.getenv("RTLS_RANGE_WINDOW_S", "2.0"))
+# Mínimo de anchors distintos para calcular posición 2D
+MIN_ANCHORS = int(os.getenv("RTLS_MIN_ANCHORS", "3"))
+# Altura media a la que se lleva el tag (m), para corregir distancias 3D→2D
+TAG_HEIGHT = float(os.getenv("RTLS_TAG_HEIGHT", "1.2"))
+
+# Filtro de Kalman (modelo de velocidad constante)
+KF_PROCESS_NOISE = float(os.getenv("RTLS_KF_PROCESS_NOISE", "0.5"))   # m/s²
+KF_MEASUREMENT_NOISE = float(os.getenv("RTLS_KF_MEAS_NOISE", "0.3"))  # m
