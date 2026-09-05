@@ -33,6 +33,11 @@ _clients: set[WebSocket] = set()
 _loop: asyncio.AbstractEventLoop | None = None
 
 
+def _on_mqtt_connect(client, userdata, flags, reason_code, properties) -> None:
+    if not reason_code.is_failure:
+        client.subscribe(f"{config.TOPIC_POSITIONS}/#")
+
+
 def _on_mqtt_message(client, userdata, msg) -> None:
     """Reenvía cada posición publicada por el motor a todos los websockets."""
     if _loop is None:
@@ -54,9 +59,9 @@ async def lifespan(app: FastAPI):
     global _loop
     _loop = asyncio.get_running_loop()
     m = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    m.on_connect = _on_mqtt_connect
     m.on_message = _on_mqtt_message
     m.connect(config.MQTT_HOST, config.MQTT_PORT)
-    m.subscribe(f"{config.TOPIC_POSITIONS}/#")
     m.loop_start()
     app.state.db = await psycopg.AsyncConnection.connect(config.DATABASE_URL, autocommit=True)
     yield

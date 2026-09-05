@@ -12,6 +12,7 @@ import json
 import logging
 import math
 from collections import defaultdict
+from copy import deepcopy
 from datetime import datetime, timezone
 
 import numpy as np
@@ -66,6 +67,7 @@ class Engine:
         self.last_position_ts: dict[str, float] = {}
         self.last_position: dict[str, np.ndarray] = {}
         self.last_cycle: dict[str, str] = {}
+        self.last_measurement_ts: dict[str, float] = {}
 
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         self.mqtt.on_connect = self._on_connect
@@ -77,7 +79,6 @@ class Engine:
             anchors = {row[0]: (row[1], row[2], row[3]) for row in cur.fetchall()}
         if not anchors:
             raise RuntimeError("No hay anchors en la BD. Carga sql/schema.sql.")
-        log.info("Anchors cargados: %s", list(anchors))
         return anchors
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
@@ -87,17 +88,35 @@ class Engine:
     def _on_message(self, client, userdata, msg) -> None:
         try:
             payload = json.loads(msg.payload)
+            if not isinstance(payload, dict):
+                raise ValueError("El mensaje debe ser un objeto")
+            if self.db.closed:
+                self.db = psycopg.connect(config.DATABASE_URL, autocommit=True, connect_timeout=3)
+            anchors = self._load_anchors()
+            if anchors != self.anchors:
+                self.anchors = anchors
+                self.buffer.clear()
+                self.filters.clear()
+                self.last_position.clear()
+                log.info("Coordenadas actualizadas; filtros reiniciados")
             if "ranges" in payload:
                 self._handle_cycle(payload)
             else:
                 self._handle_range(payload)
-        except Exception:
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            self.db.close()
+            log.exception("Conexion PostgreSQL perdida; se reintentara con el siguiente mensaje")
+        except (ValueError, TypeError, KeyError):
             log.exception("Mensaje invalido en %s: %r", msg.topic, msg.payload[:200])
+        except Exception:
+            log.exception("Error procesando mensaje en %s", msg.topic)
 
     def _handle_cycle(self, payload: dict) -> None:
         tag = _id(payload.get("tag"), "tag")
         cycle = _cycle(payload.get("cycle"))
         ts = _timestamp(payload.get("ts"))
+        if ts.timestamp() <= self.last_measurement_ts.get(tag, float("-inf")):
+            return
         if self.last_cycle.get(tag) == cycle:
             log.debug("Ciclo duplicado %s/%s ignorado", tag, cycle)
             return
@@ -107,6 +126,7 @@ class Engine:
             raise ValueError("ranges debe ser una lista no vacia")
 
         distances: dict[str, float] = {}
+        seen = set()
         rows = []
         for item in raw_ranges:
             if not isinstance(item, dict):
@@ -114,23 +134,28 @@ class Engine:
             anchor = _id(item.get("anchor"), "anchor")
             if anchor not in self.anchors:
                 raise ValueError(f"anchor desconocido: {anchor}")
-            if anchor in distances:
+            if anchor in seen:
                 raise ValueError(f"anchor repetido en el ciclo: {anchor}")
+            seen.add(anchor)
             distance = _number(item.get("distance"), "distance", positive=True)
             rssi = None if item.get("rssi") is None else _number(item["rssi"], "rssi")
             az = self.anchors[anchor][2]
-            distances[anchor] = project_to_2d(distance, az, config.TAG_HEIGHT)
             rows.append((tag, anchor, ts, distance, rssi, json.dumps(payload)))
+            try:
+                distances[anchor] = project_to_2d(distance, az, config.TAG_HEIGHT, config.RANGE_HEIGHT_TOLERANCE)
+            except ValueError:
+                log.warning("Rango imposible descartado para posicion: %s/%s", tag, anchor)
 
         self._store_ranges(tag, rows)
-        self.last_cycle[tag] = cycle
         if len(distances) < config.MIN_ANCHORS:
             log.warning(
                 "Ciclo %s/%s guardado sin posicion: %d anchors",
                 tag, cycle, len(distances),
             )
-            return
-        self._calculate_position(tag, ts, distances)
+        else:
+            self._calculate_position(tag, ts, distances)
+        self.last_cycle[tag] = cycle
+        self.last_measurement_ts[tag] = ts.timestamp()
 
     def _handle_range(self, payload: dict) -> None:
         """Compatibilidad con el formato historico de un rango por mensaje."""
@@ -139,13 +164,25 @@ class Engine:
         distance = _number(payload.get("distance"), "distance", positive=True)
         rssi = None if payload.get("rssi") is None else _number(payload["rssi"], "rssi")
         ts = _timestamp(payload.get("ts"))
+        now = ts.timestamp()
+        if now < self.last_measurement_ts.get(tag, float("-inf")):
+            return
+        if now <= self.buffer[tag].get(anchor, (float("-inf"), 0))[0]:
+            return
         if anchor not in self.anchors:
             log.warning("Rango de anchor desconocido %s ignorado", anchor)
             return
 
         self._store_ranges(tag, [(tag, anchor, ts, distance, rssi, json.dumps(payload))])
         az = self.anchors[anchor][2]
-        self.buffer[tag][anchor] = (ts.timestamp(), project_to_2d(distance, az, config.TAG_HEIGHT))
+        self.last_measurement_ts[tag] = now
+        try:
+            horizontal = project_to_2d(distance, az, config.TAG_HEIGHT, config.RANGE_HEIGHT_TOLERANCE)
+        except ValueError:
+            self.buffer[tag].pop(anchor, None)
+            log.warning("Rango imposible descartado para posicion: %s/%s", tag, anchor)
+            return
+        self.buffer[tag][anchor] = (now, horizontal)
         self._try_position(tag, ts)
 
     def _store_ranges(self, tag: str, rows: list[tuple]) -> None:
@@ -162,13 +199,16 @@ class Engine:
         fresh = {
             anchor: (measured_at, distance)
             for anchor, (measured_at, distance) in self.buffer[tag].items()
-            if now - measured_at <= config.RANGE_WINDOW_S
+            if 0 <= now - measured_at <= config.RANGE_WINDOW_S
         }
         self.buffer[tag] = fresh
         if len(fresh) >= config.MIN_ANCHORS:
             self._calculate_position(tag, ts, {anchor: value[1] for anchor, value in fresh.items()})
 
     def _calculate_position(self, tag: str, ts: datetime, distances: dict[str, float]) -> None:
+        now = ts.timestamp()
+        if now <= self.last_position_ts.get(tag, float("-inf")):
+            return
         anchor_ids = list(distances)
         anchors_xy = np.array([self.anchors[anchor][:2] for anchor in anchor_ids])
         measured = np.array([distances[anchor] for anchor in anchor_ids])
@@ -176,15 +216,16 @@ class Engine:
             raw_position, rms = trilaterate(
                 anchors_xy, measured, initial_guess=self.last_position.get(tag)
             )
-        except Exception:
+        except ValueError:
             log.exception("Trilateracion fallida para %s", tag)
             return
 
-        now = ts.timestamp()
+        if not math.isfinite(rms) or rms > config.MAX_RMS:
+            log.warning("Posicion rechazada para %s: RMS %.3f m", tag, rms)
+            return
         dt = now - self.last_position_ts.get(tag, now)
-        filtered = self.filters[tag].update(raw_position, dt)
-        self.last_position_ts[tag] = now
-        self.last_position[tag] = filtered
+        candidate_filter = deepcopy(self.filters[tag])
+        filtered = candidate_filter.update(raw_position, dt)
 
         with self.db.cursor() as cur:
             cur.execute(
@@ -193,6 +234,9 @@ class Engine:
                 (tag, ts, float(filtered[0]), float(filtered[1]),
                  config.TAG_HEIGHT, rms, len(anchor_ids)),
             )
+        self.filters[tag] = candidate_filter
+        self.last_position_ts[tag] = now
+        self.last_position[tag] = filtered
         self.mqtt.publish(
             f"{config.TOPIC_POSITIONS}/{tag}",
             json.dumps({

@@ -107,28 +107,29 @@ oficial. Después usa:
 
 ```text
 # A0
-AT+SETCFG=0,1,0,1
+AT+SETCFG=0,1,1,1
 # A1
-AT+SETCFG=1,1,0,1
+AT+SETCFG=1,1,1,1
 # A2
-AT+SETCFG=2,1,0,1
+AT+SETCFG=2,1,1,1
 # A3
-AT+SETCFG=3,1,0,1
+AT+SETCFG=3,1,1,1
 # T0
-AT+SETCFG=0,0,0,1
+AT+SETCFG=0,0,1,1
 ```
 
 Envía a cada placa, después de su `SETCFG`:
 
 ```text
-AT+SETCAP=10,15
+AT+SETCAP=10,10,0
 AT+SETRPT=1
 AT+SAVE
 AT+RESTART
 ```
 
-El tercer y cuarto parámetro (`speed=0`, `filter=1`) son los valores iniciales
-propuestos. Mantén iguales en todas las placas el canal/PAN y demás parámetros
+El tercer y cuarto parámetro (`speed=1`, 6.8 Mbps; `filter=1`) y `SETCAP`
+coinciden con los sketches de `../arduino` para firmware AT reciente.
+Mantén iguales en todas las placas el canal/PAN y demás parámetros
 de radio que exponga tu versión de firmware. Confirma las respuestas `OK` y,
 después del reinicio, el ID y papel mostrados por el ejemplo serie. La sintaxis
 exacta puede variar entre versiones del
@@ -266,7 +267,21 @@ El motor y la API aceptan estas variables principales:
 - `RTLS_DATABASE_URL`.
 - `RTLS_MIN_ANCHORS` (3 por defecto; mantener 3 para tolerar una medida ausente).
 - `RTLS_TAG_HEIGHT` (1.2 m por defecto).
+- `RTLS_RANGE_HEIGHT_TOLERANCE` (0.1 m): tolerancia de ruido cuando la distancia
+  medida es menor que la separación vertical. Ajustar con medidas reales.
+- `RTLS_MAX_RMS` (0.5 m): residuo máximo aceptado antes de actualizar el filtro.
 - `RTLS_KF_PROCESS_NOISE` y `RTLS_KF_MEAS_NOISE` para el filtro.
+
+El motor relee las coordenadas antes de cada mensaje y reinicia los filtros y
+rangos en memoria si cambian. Las medidas físicamente imposibles se conservan
+en la base, pero no se usan para posicionar. Se requieren al menos tres rangos
+válidos de anchors no colineales. Las posiciones rechazadas no actualizan el
+filtro; el RMS describe el ajuste previo al suavizado, no garantiza precisión.
+
+Las medidas atrasadas no actualizan el seguimiento. Tras una pérdida de conexión
+PostgreSQL, el motor intenta reconectar con el siguiente mensaje; las rondas
+recibidas durante la caída no se recuperan automáticamente (MQTT QoS 0).
+La API renueva su suscripción MQTT en cada reconexión.
 
 Mosquitto permite acceso anónimo solo para desarrollo. Antes de usarlo fuera de
 una red de pruebas, configura usuarios/TLS, restringe CORS y define una política
