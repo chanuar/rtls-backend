@@ -1,9 +1,8 @@
--- Esquema RTLS UWB
 -- ranges es la fuente de verdad (datos crudos, nunca se borran por lógica de negocio)
 -- positions es derivado y recalculable
 
 CREATE TABLE IF NOT EXISTS anchors (
-    id          TEXT PRIMARY KEY,          -- p.ej. 'A0'
+    id          TEXT PRIMARY KEY,
     x           DOUBLE PRECISION NOT NULL, -- metros, medido con cinta métrica
     y           DOUBLE PRECISION NOT NULL,
     z           DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -11,8 +10,8 @@ CREATE TABLE IF NOT EXISTS anchors (
 );
 
 CREATE TABLE IF NOT EXISTS tags (
-    id          TEXT PRIMARY KEY,          -- p.ej. 'T0'
-    employee    TEXT,                      -- nombre o id interno del empleado
+    id          TEXT PRIMARY KEY,
+    employee    TEXT,
     active      BOOLEAN NOT NULL DEFAULT TRUE
 );
 
@@ -22,8 +21,8 @@ CREATE TABLE IF NOT EXISTS ranges (
     anchor_id TEXT NOT NULL REFERENCES anchors(id),
     ts        TIMESTAMPTZ NOT NULL,
     distance  DOUBLE PRECISION NOT NULL,   -- metros
-    rssi      DOUBLE PRECISION,            -- opcional, diagnóstico
-    raw       JSONB                        -- payload original completo
+    rssi      DOUBLE PRECISION,
+    raw       JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_ranges_tag_ts ON ranges (tag_id, ts DESC);
 
@@ -35,7 +34,7 @@ CREATE TABLE IF NOT EXISTS positions (
     y        DOUBLE PRECISION NOT NULL,
     z        DOUBLE PRECISION NOT NULL DEFAULT 0,
     quality  DOUBLE PRECISION,             -- residuo del ajuste (menor = mejor)
-    n_anchors SMALLINT                     -- nº de anchors usados en el cálculo
+    n_anchors SMALLINT
 );
 CREATE INDEX IF NOT EXISTS idx_positions_tag_ts ON positions (tag_id, ts DESC);
 

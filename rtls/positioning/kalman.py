@@ -1,9 +1,3 @@
-"""Filtro de Kalman 2D con modelo de velocidad constante.
-
-Estado: [x, y, vx, vy]. Medida: posición (x, y) de la trilateración.
-Elimina saltos y suaviza la trayectoria. Suficiente para la Fase 1;
-si más adelante se fusionan medidas de distancia directamente, migrar a EKF.
-"""
 from __future__ import annotations
 
 import numpy as np
@@ -14,7 +8,7 @@ class KalmanFilter2D:
         self.q = process_noise       # aceleración esperada (m/s²)
         self.r = measurement_noise   # ruido de medida (m)
         self.x: np.ndarray | None = None  # estado [x, y, vx, vy]
-        self.P: np.ndarray | None = None  # covarianza
+        self.P: np.ndarray | None = None
         self._H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
 
     def update(self, measurement: np.ndarray, dt: float) -> np.ndarray:
@@ -31,7 +25,6 @@ class KalmanFilter2D:
 
         dt = max(dt, 1e-3)
 
-        # Predicción
         F = np.array([
             [1, 0, dt, 0],
             [0, 1, 0, dt],
@@ -46,7 +39,6 @@ class KalmanFilter2D:
         self.x = F @ self.x
         self.P = F @ self.P @ F.T + Q
 
-        # Corrección
         R = np.eye(2) * self.r**2
         y = z - self._H @ self.x
         S = self._H @ self.P @ self._H.T + R

@@ -14,7 +14,7 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     ports:
-      - "1883:1883"   # MQTT
+      - "1883:1883"
       - "9001:9001"   # MQTT over WebSockets (opcional, para el frontend)
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf

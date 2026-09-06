@@ -1,4 +1,3 @@
-"""Simula el montaje MaUWB de 4 anchors y un tag."""
 from __future__ import annotations
 
 import json

@@ -1,17 +1,3 @@
-"""API para el frontend React.
-
-REST:
-  GET /anchors                       — coordenadas de anchors (para dibujar el plano)
-  GET /tags                          — tags/empleados
-  GET /positions/{tag}?start=&end=   — trayectoria histórica (para timeline/replay)
-  GET /heatmap?start=&end=&cell=0.5  — rejilla de ocupación agregada
-
-WebSocket:
-  /ws/positions                      — posiciones en vivo de todos los tags
-                                       (retransmite lo que el motor publica por MQTT)
-
-Ejecutar:  uvicorn rtls.api:app --reload --port 8000
-"""
 from __future__ import annotations
 
 import asyncio
@@ -39,7 +25,6 @@ def _on_mqtt_connect(client, userdata, flags, reason_code, properties) -> None:
 
 
 def _on_mqtt_message(client, userdata, msg) -> None:
-    """Reenvía cada posición publicada por el motor a todos los websockets."""
     if _loop is None:
         return
     data = msg.payload.decode()

@@ -46,7 +46,6 @@ def trilaterate(
         raise ValueError("Geometria de anchors invalida o colineal")
 
     if initial_guess is None:
-        # Centroide de los anchors como punto de partida
         initial_guess = anchors_xy.mean(axis=0)
 
     def residuals(p: np.ndarray) -> np.ndarray:
