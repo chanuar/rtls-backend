@@ -39,14 +39,14 @@ CREATE TABLE IF NOT EXISTS positions (
 CREATE INDEX IF NOT EXISTS idx_positions_tag_ts ON positions (tag_id, ts DESC);
 
 -- Configuración inicial para 5 MaUWB: 4 anchors (A0-A3) + 1 tag (T0).
--- Local real aproximado: 28 x 5.6 m, planta alargada.
--- Eje X = profundidad desde la fachada/entrada; eje Y = anchura del local.
--- Son valores de arranque: medir cada posición y sustituirlos antes de calibrar.
+-- Local medido: aprox. 7.4 x 4.4 m. Eje X y eje Y en metros desde el origen
+-- (0,0) elegido en el montaje. Todos los anchors a 0.8 m de altura; el tag
+-- circula a 1.0 m (RTLS_TAG_HEIGHT).
 INSERT INTO anchors (id, x, y, z, description) VALUES
-    ('A0', 0.5,  0.5, 3.0, 'Fachada, lado izquierdo; pasarela USB'),
-    ('A1', 0.5,  5.1, 3.0, 'Fachada, lado derecho'),
-    ('A2', 27.5, 0.5, 3.0, 'Fondo, lado izquierdo'),
-    ('A3', 27.5, 5.1, 3.0, 'Fondo, lado derecho')
+    ('A0', 6.2,  2.2,  0.8, 'Pasarela USB (COM3)'),
+    ('A1', 7.37, 4.4,  0.8, 'Anchor A1'),
+    ('A2', 0.0,  4.4,  0.8, 'Anchor A2'),
+    ('A3', 0.0,  0.67, 0.8, 'Anchor A3')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO tags (id, employee) VALUES ('T0', 'Tag de pruebas')

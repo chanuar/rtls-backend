@@ -16,9 +16,13 @@ DATABASE_URL = os.getenv(
 RANGE_WINDOW_S = float(os.getenv("RTLS_RANGE_WINDOW_S", "2.0"))
 MIN_ANCHORS = int(os.getenv("RTLS_MIN_ANCHORS", "3"))
 # Altura media a la que se lleva el tag (m), para corregir distancias 3D→2D
-TAG_HEIGHT = float(os.getenv("RTLS_TAG_HEIGHT", "1.2"))
+TAG_HEIGHT = float(os.getenv("RTLS_TAG_HEIGHT", "1.0"))
+if not math.isfinite(TAG_HEIGHT):
+    raise ValueError("RTLS_TAG_HEIGHT debe ser finita")
+if MIN_ANCHORS < 3:
+    raise ValueError("RTLS_MIN_ANCHORS debe ser >= 3 para posicionar en 2D")
 RANGE_HEIGHT_TOLERANCE = float(os.getenv("RTLS_RANGE_HEIGHT_TOLERANCE", "0.1"))
-MAX_RMS = float(os.getenv("RTLS_MAX_RMS", "0.5"))
+MAX_RMS = float(os.getenv("RTLS_MAX_RMS", "1.5"))
 if not math.isfinite(RANGE_HEIGHT_TOLERANCE) or RANGE_HEIGHT_TOLERANCE < 0:
     raise ValueError("RTLS_RANGE_HEIGHT_TOLERANCE debe ser finita y >= 0")
 if not math.isfinite(MAX_RMS) or MAX_RMS <= 0:
