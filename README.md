@@ -50,13 +50,14 @@ Arrancar, en terminales separadas:
 
 ```bash
 python -m rtls.engine
-uvicorn rtls.api:app --reload --port 8000
+python -m rtls.api  # Windows
+# uvicorn rtls.api:app --reload --port 8000  # Linux/macOS
 ```
 
 Para probar sin placas, una tercera terminal puede ejecutar:
 
 ```bash
-python tools/simulator.py
+python -m tools.simulator
 ```
 
 Comprobaciones:
@@ -70,11 +71,16 @@ curl "http://localhost:8000/positions/T0?start=2026-01-01T00:00:00Z&end=2030-01-
 La API en vivo está en `ws://localhost:8000/ws/positions`.
 
 > `sql/schema.sql` solo se ejecuta al crear por primera vez el volumen de
-> PostgreSQL. Si este proyecto ya se arrancó con el esquema antiguo de seis
-> anchors y no hay datos que conservar, `docker compose down -v` y después
-> `docker compose up -d` recrean la base. **`-v` borra todos los rangos y
-> posiciones almacenados.** Si hay datos útiles, expórtalos y migra las
-> coordenadas manualmente.
+> PostgreSQL. Para una base existente, revisa `sql/update_measured_anchors.sql`
+> y aplícalo solo si coincide con tu montaje. Desde PowerShell:
+>
+> ```powershell
+> Get-Content sql/update_measured_anchors.sql | docker compose exec -T postgres psql -U rtls -d rtls -v ON_ERROR_STOP=1
+> ```
+>
+> Conserva rangos y posiciones históricos; las posiciones antiguas no se
+> recalculan. Anota la fecha del cambio de calibración para interpretar el
+> histórico. El motor relee las coordenadas con el siguiente mensaje.
 
 ## Montaje físico
 
@@ -142,28 +148,34 @@ Makerfabs](https://github.com/Makerfabs/MaUWB_ESP32S3-with-STM32-AT-Command) y
 
 ### 2. Colocar y medir
 
+Segundo montaje de prueba del 2026-09-08: A0 `(12.0, 0.27, 2.0)`,
+A1 `(1.6, 0.8, 1.9)`, A2 `(1.6, 5.6, 2.0)` y A3 `(12.4, 4.6, 2.0)` m.
+La actualización explícita está en `sql/anchors_trial_2026_09_08_02.sql`;
+después aplica `sql/anchors_trial_2026_09_08_03.sql` para corregir A1/A2.
+se aplica con el mismo comando `psql` indicado arriba, cambiando el archivo.
+T0 irá aproximadamente a 1.0 m: usa `RTLS_TAG_HEIGHT=1.0` (valor por defecto).
+El montaje anterior se conserva en `sql/anchors_trial_2026_09_08.sql`.
+
 Usa como origen `(0,0)` la esquina izquierda de la fachada, X hacia el fondo e
 Y hacia el lado derecho. Colocación inicial incluida en `sql/schema.sql`:
 
 ```text
-fachada
-A0 (0.5, 0.5, 3.0) ---------------- A1 (0.5, 5.1, 3.0)
-        |                                      |
-        |               T0                     |  28 m aprox.
-        |                                      |
-A2 (27.5, 0.5, 3.0) --------------- A3 (27.5, 5.1, 3.0)
-fondo
+A0 = (6.20, 2.20, 0.80)  pasarela USB
+A1 = (7.37, 4.40, 0.80)
+A2 = (0.00, 4.40, 0.80)
+A3 = (0.00, 0.67, 0.80)
+Local aproximado: 7.4 m de profundidad × 4.4 m de anchura
 ```
 
 - Fija los anchors, con orientación similar, visión lo más despejada posible y
   alimentación USB estable.
 - Mide X, Y y Z desde el mismo origen hasta el centro de la antena de cada placa
   y sustituye los valores de `anchors` en la base de datos.
-- Lleva T0 aproximadamente a la altura indicada por `RTLS_TAG_HEIGHT` (1,2 m por
+- Lleva T0 aproximadamente a la altura indicada por `RTLS_TAG_HEIGHT` (1,0 m por
   defecto). Cambia esa variable si el tag irá a otra altura.
-- En un local largo, estanterías, personas y cámaras frigoríficas producen NLOS.
-  Con cuatro anchors se cubre el mínimo geométrico, pero no hay la redundancia
-  del diseño original de seis anchors; valida especialmente la zona central.
+- Estanterías, personas y cámaras frigoríficas producen NLOS. Cuatro anchors
+  permiten comprobar la coherencia del ajuste 2D, pero no identificar siempre
+  cuál de las medidas es incorrecta.
 
 ### 3. Conectar A0 a MQTT
 
@@ -266,7 +278,7 @@ El motor y la API aceptan estas variables principales:
 - `RTLS_MQTT_HOST`, `RTLS_MQTT_PORT`, `RTLS_TOPIC_RANGES`.
 - `RTLS_DATABASE_URL`.
 - `RTLS_MIN_ANCHORS` (3 por defecto; mantener 3 para tolerar una medida ausente).
-- `RTLS_TAG_HEIGHT` (1.2 m por defecto).
+- `RTLS_TAG_HEIGHT` (1.0 m por defecto).
 - `RTLS_RANGE_HEIGHT_TOLERANCE` (0.1 m): tolerancia de ruido cuando la distancia
   medida es menor que la separación vertical. Ajustar con medidas reales.
 - `RTLS_MAX_RMS` (0.5 m): residuo máximo aceptado antes de actualizar el filtro.
@@ -278,10 +290,32 @@ en la base, pero no se usan para posicionar. Se requieren al menos tres rangos
 válidos de anchors no colineales. Las posiciones rechazadas no actualizan el
 filtro; el RMS describe el ajuste previo al suavizado, no garantiza precisión.
 
+Se calcula `d_horizontal = sqrt(d_3D² - (z_anchor - z_tag)²)` y se ajustan
+X e Y minimizando los residuos de distancia horizontal. Z se fija a
+`RTLS_TAG_HEIGHT`: no se estima la altura. Con las alturas iniciales, la
+separación vertical es 0.2 m. Los arranques múltiples reducen la dependencia
+de la posición anterior del solver; el filtro Kalman suaviza después.
+
+Se usan todos los rangos físicamente válidos disponibles. Si su RMS supera el
+umbral, se rechaza la posición completa: no se elimina el anchor que permita
+obtener el menor RMS. Tres anchors no colineales permiten calcular X/Y si falta
+una medida, con menos información para detectar errores. Para exigir cuatro,
+configura `RTLS_MIN_ANCHORS=4`. Incluso un RMS bajo puede acompañar errores de
+posición por geometría, NLOS o alturas incorrectas; valida con puntos medidos.
+
+El simulador produce solo T0 y carga A0-A3 desde PostgreSQL al arrancar; usa
+la altura, broker y topic de la configuración del motor. Reinícialo si cambias
+las coordenadas. Su recorrido usa los límites X/Y de los anchors, sin modelar
+paredes ni obstáculos. Detén la pasarela real antes de simular con el mismo T0.
+
 Las medidas atrasadas no actualizan el seguimiento. Tras una pérdida de conexión
 PostgreSQL, el motor intenta reconectar con el siguiente mensaje; las rondas
 recibidas durante la caída no se recuperan automáticamente (MQTT QoS 0).
 La API renueva su suscripción MQTT en cada reconexión.
+Cada consulta REST abre y cierra su propia conexión PostgreSQL, con un timeout
+de conexión de 3 segundos. Si la conexión o consulta falla por pérdida de la
+base de datos, devuelve HTTP 503; la siguiente petición vuelve a conectar,
+sin necesidad de reiniciar la API.
 
 Mosquitto permite acceso anónimo solo para desarrollo. Antes de usarlo fuera de
 una red de pruebas, configura usuarios/TLS, restringe CORS y define una política
