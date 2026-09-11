@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 import paho.mqtt.client as mqtt
 import psycopg
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
@@ -48,10 +49,20 @@ async def lifespan(app: FastAPI):
     m.on_message = _on_mqtt_message
     m.connect(config.MQTT_HOST, config.MQTT_PORT)
     m.loop_start()
-    app.state.db = await psycopg.AsyncConnection.connect(config.DATABASE_URL, autocommit=True)
     yield
     m.loop_stop()
-    await app.state.db.close()
+
+
+@asynccontextmanager
+async def _db_cursor():
+    try:
+        async with await psycopg.AsyncConnection.connect(
+            config.DATABASE_URL, autocommit=True, connect_timeout=3,
+        ) as db, db.cursor() as cur:
+            yield cur
+    except (psycopg.OperationalError, psycopg.InterfaceError) as error:
+        log.warning("PostgreSQL no disponible: %s", error)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible") from error
 
 
 app = FastAPI(title="RTLS UWB API", lifespan=lifespan)
@@ -65,7 +76,7 @@ app.add_middleware(
 
 @app.get("/anchors")
 async def get_anchors():
-    async with app.state.db.cursor() as cur:
+    async with _db_cursor() as cur:
         await cur.execute("SELECT id, x, y, z, description FROM anchors ORDER BY id")
         rows = await cur.fetchall()
     return [{"id": r[0], "x": r[1], "y": r[2], "z": r[3], "description": r[4]} for r in rows]
@@ -73,7 +84,7 @@ async def get_anchors():
 
 @app.get("/tags")
 async def get_tags():
-    async with app.state.db.cursor() as cur:
+    async with _db_cursor() as cur:
         await cur.execute("SELECT id, employee, active FROM tags ORDER BY id")
         rows = await cur.fetchall()
     return [{"id": r[0], "employee": r[1], "active": r[2]} for r in rows]
@@ -85,7 +96,7 @@ async def get_positions(
     start: datetime = Query(..., description="ISO 8601, UTC"),
     end: datetime = Query(..., description="ISO 8601, UTC"),
 ):
-    async with app.state.db.cursor() as cur:
+    async with _db_cursor() as cur:
         await cur.execute(
             "SELECT ts, x, y, quality, n_anchors FROM positions"
             " WHERE tag_id = %s AND ts BETWEEN %s AND %s ORDER BY ts",
@@ -108,7 +119,7 @@ async def get_heatmap(
     """Rejilla de ocupación: cuántas muestras de posición caen en cada celda."""
     filt = " AND tag_id = %s" if tag_id else ""
     params: list = [cell, cell, start, end] + ([tag_id] if tag_id else [])
-    async with app.state.db.cursor() as cur:
+    async with _db_cursor() as cur:
         await cur.execute(
             f"SELECT floor(x / %s)::int AS cx, floor(y / %s)::int AS cy, count(*)"
             f" FROM positions WHERE ts BETWEEN %s AND %s{filt}"
@@ -128,3 +139,9 @@ async def ws_positions(ws: WebSocket):
             await ws.receive_text()  # keepalive / ignoramos entradas
     except WebSocketDisconnect:
         _clients.discard(ws)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, port=8000, loop="asyncio:SelectorEventLoop" if sys.platform == "win32" else "auto")
