@@ -214,7 +214,8 @@ class Engine:
         measured = np.array([distances[anchor] for anchor in anchor_ids])
         try:
             raw_position, rms = trilaterate(
-                anchors_xy, measured, initial_guess=self.last_position.get(tag)
+                anchors_xy, measured,
+                initial_guess=self.last_position.get(tag),
             )
         except ValueError:
             log.exception("Trilateracion fallida para %s", tag)

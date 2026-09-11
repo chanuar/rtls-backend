@@ -1,5 +1,6 @@
 import json
 import unittest
+from itertools import combinations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
@@ -12,10 +13,11 @@ from rtls.api import _on_mqtt_connect
 from rtls.engine import Engine
 from rtls.positioning.trilateration import project_to_2d, trilaterate
 from tools.mauwb_gateway import parse_at_range
+from tools.simulator import WalkingTag
 
 
-ANCHORS = {"A0": (0.5, 0.5, 3.0), "A1": (0.5, 5.1, 3.0),
-           "A2": (27.5, 0.5, 3.0), "A3": (27.5, 5.1, 3.0)}
+ANCHORS = {"A0": (6.2, 2.2, 0.8), "A1": (7.37, 4.4, 0.8),
+           "A2": (0.0, 4.4, 0.8), "A3": (0.0, 0.67, 0.8)}
 START = datetime(2026, 8, 17, tzinfo=timezone.utc)
 
 
@@ -46,16 +48,19 @@ class MaUWBTest(unittest.TestCase):
 
     def test_known_positions_with_real_solver(self):
         anchors = np.array(list(ANCHORS.values()))
-        for point in [(0.8, 0.7), (14, 2.8), (27.2, 4.9), (4, 2)]:
-            for count in (3, 4):
-                with self.subTest(point=point, count=count):
+        for point in [(0.0, 0.0), (0.8, 0.7), (3.7, 2.2), (7.4, 4.4), (4, 2)]:
+            for indices in [*combinations(range(4), 3), (0, 1, 2, 3)]:
+                selected = anchors[list(indices)]
+                with self.subTest(point=point, indices=indices):
                     distances = [project_to_2d(np.linalg.norm(a - [*point, config.TAG_HEIGHT]),
-                                               a[2], config.TAG_HEIGHT) for a in anchors[:count]]
-                    actual, rms = trilaterate(anchors[:count, :2], distances)
+                                               a[2], config.TAG_HEIGHT) for a in selected]
+                    actual, rms = trilaterate(selected[:, :2], distances)
                     np.testing.assert_allclose(actual, point, atol=1e-5)
                     self.assertLess(rms, 1e-5)
 
     def test_impossible_projection_and_noise_tolerance(self):
+        self.assertAlmostEqual(project_to_2d(5.0, 4.0, 1.0), 4.0)
+        self.assertAlmostEqual(project_to_2d(5.0, 1.0, 4.0), 4.0)
         with self.assertRaises(ValueError):
             project_to_2d(0.5, 3, 1.2)
         self.assertLess(project_to_2d(1.75, 3, 1.2, tolerance=0.1), 0.01)
@@ -82,7 +87,43 @@ class MaUWBTest(unittest.TestCase):
         self.engine._handle_cycle(payload)
         self.engine.mqtt.publish.assert_called_once()
 
+    def test_solver_escapes_wrong_basin_from_bad_seed(self):
+        """La semilla no debe poder encallar el ajuste en el minimo espejo."""
+        anchors = np.array(list(ANCHORS.values()))
+        point = (4.0, 2.0)
+        distances = [project_to_2d(np.linalg.norm(a - [*point, config.TAG_HEIGHT]),
+                                   a[2], config.TAG_HEIGHT) for a in anchors]
+        for seed in [(0.0, 0.0), (27.5, 5.1), (4.0, -30.0), (500.0, 500.0)]:
+            with self.subTest(seed=seed):
+                actual, rms = trilaterate(anchors[:, :2], distances,
+                                          initial_guess=np.array(seed))
+                np.testing.assert_allclose(actual, point, atol=1e-5)
+                self.assertLess(rms, 1e-5)
+
+    def test_ambiguous_outlier_is_rejected_and_raw_ranges_preserved(self):
+        self.engine._handle_cycle(cycle())
+        before = self.engine.filters["T0"].x.copy()
+        payload = cycle(sequence=2)
+        horizontal = [3.15534034, 5.68642585, 3.88428194, 5.20985108]
+        for item, distance in zip(payload["ranges"], horizontal):
+            dz = ANCHORS[item["anchor"]][2] - config.TAG_HEIGHT
+            item["distance"] = float(np.hypot(distance, dz))
+        self.engine._handle_cycle(payload)
+        self.engine.mqtt.publish.assert_called_once()
+        np.testing.assert_array_equal(self.engine.filters["T0"].x, before)
+        stored = self.db.cursor.return_value.__enter__.return_value.executemany.call_args.args[1]
+        self.assertEqual(len(stored), 4)
+
+    def test_simulator_uses_supplied_survey_and_configured_height(self):
+        tag = WalkingTag("T0", ANCHORS)
+        tag.x, tag.y = 4.0, 2.0
+        with patch("tools.simulator.random.gauss", return_value=0):
+            payload = tag.cycle(1)
+        self.engine._handle_cycle(payload)
+        np.testing.assert_allclose(self.engine.last_position["T0"], [4, 2], atol=0.002)
+
     def test_bad_fit_does_not_change_filter(self):
+        """Una ronda incompatible no debe alterar el filtro."""
         self.engine._handle_cycle(cycle())
         before = self.engine.filters["T0"].x.copy()
         payload = cycle(sequence=2)
@@ -93,7 +134,7 @@ class MaUWBTest(unittest.TestCase):
 
     def test_impossible_range_excluded_but_stored(self):
         payload = cycle()
-        payload["ranges"][0]["distance"] = 0.5
+        payload["ranges"][0]["distance"] = 0.01
         self.engine._handle_cycle(payload)
         published = json.loads(self.engine.mqtt.publish.call_args.args[1])
         self.assertEqual(published["n_anchors"], 3)
@@ -149,6 +190,13 @@ class MaUWBTest(unittest.TestCase):
         client.subscribe.assert_called_with(f"{config.TOPIC_POSITIONS}/#")
         _on_mqtt_connect(client, None, None, SimpleNamespace(is_failure=True), None)
         self.assertEqual(client.subscribe.call_count, 2)
+
+    def test_windows_api_loop_factory_is_supported(self):
+        import asyncio
+        from uvicorn import Config
+
+        factory = Config("rtls.api:app", loop="asyncio:SelectorEventLoop").get_loop_factory()
+        self.assertIs(factory, asyncio.SelectorEventLoop)
 
 
 if __name__ == "__main__":

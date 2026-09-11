@@ -3,8 +3,8 @@
 Dadas distancias del tag a N anchors (N >= 3), estima (x, y) minimizando
 los residuos  ||p - anchor_i|| - d_i  con Levenberg-Marquardt / TRF (SciPy).
 
-Las distancias UWB son 3D (anchor a 3 m de altura, tag a ~1.2 m); antes de
-resolver en 2D se proyectan al plano horizontal con Pitágoras.
+Las distancias UWB son 3D; antes de resolver en 2D se proyectan al plano
+horizontal con Pitágoras usando las alturas medidas de anchors y tag.
 """
 from __future__ import annotations
 
@@ -45,14 +45,51 @@ def trilaterate(
     if not np.isfinite(anchors_xy).all() or np.linalg.matrix_rank(anchors_xy - anchors_xy.mean(axis=0)) < 2:
         raise ValueError("Geometria de anchors invalida o colineal")
 
-    if initial_guess is None:
-        initial_guess = anchors_xy.mean(axis=0)
-
     def residuals(p: np.ndarray) -> np.ndarray:
         return np.linalg.norm(anchors_xy - p, axis=1) - distances
 
-    result = least_squares(residuals, initial_guess, method="lm")
-    if not result.success or not np.isfinite(result.x).all() or not np.isfinite(result.fun).all():
+    best_position: np.ndarray | None = None
+    best_rms = float("inf")
+    for start in _start_points(anchors_xy, initial_guess):
+        result = least_squares(residuals, start, method="lm")
+        if not result.success:
+            continue
+        if not np.isfinite(result.x).all() or not np.isfinite(result.fun).all():
+            continue
+        rms = float(np.sqrt(np.mean(result.fun**2)))
+        if rms < best_rms:
+            best_position, best_rms = result.x, rms
+
+    if best_position is None:
         raise ValueError("La trilateracion no converge a una posicion finita")
-    rms = float(np.sqrt(np.mean(result.fun**2)))
-    return result.x, rms
+    return best_position, best_rms
+
+
+def _start_points(anchors_xy: np.ndarray, initial_guess: np.ndarray | None) -> list[np.ndarray]:
+    """Puntos de arranque para el solver, sin repetidos.
+
+    Levenberg-Marquardt es un optimizador local; una geometria alargada puede
+    presentar minimos locales. Arrancar solo desde el centroide o desde la ultima posicion puede
+    dejar el ajuste atrapado en el minimo equivocado, y si esa posicion se
+    rechaza por RMS la semilla nunca se actualiza y el tag queda encallado.
+    Se prueban varios arranques y se conserva el de menor residuo.
+    """
+    candidates = []
+    if initial_guess is not None:
+        candidates.append(np.asarray(initial_guess, dtype=float))
+    candidates.append(anchors_xy.mean(axis=0))
+    candidates.extend(anchors_xy)
+    low = anchors_xy.min(axis=0)
+    high = anchors_xy.max(axis=0)
+    candidates.extend([
+        np.array([low[0], low[1]]), np.array([low[0], high[1]]),
+        np.array([high[0], low[1]]), np.array([high[0], high[1]]),
+    ])
+
+    unique: list[np.ndarray] = []
+    for candidate in candidates:
+        if candidate.shape != (2,) or not np.isfinite(candidate).all():
+            continue
+        if not any(np.allclose(candidate, kept, atol=1e-9, rtol=0) for kept in unique):
+            unique.append(candidate)
+    return unique
