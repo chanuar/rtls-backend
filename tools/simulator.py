@@ -7,28 +7,23 @@ import time
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
+import psycopg
 
-MQTT_HOST = "localhost"
-TOPIC = "rtls/ranges"
-ANCHORS = {
-    "A0": (0.5, 0.5, 3.0),
-    "A1": (0.5, 5.1, 3.0),
-    "A2": (27.5, 0.5, 3.0),
-    "A3": (27.5, 5.1, 3.0),
-}
-WALK_X = (0.8, 27.2)
-WALK_Y = (0.7, 4.9)
-TAG_HEIGHT = 1.2
+from rtls import config
+
 NOISE_STD = 0.10
 UPDATE_PERIOD = 1.0
 
 
 class WalkingTag:
-    def __init__(self, tag_id: str):
+    def __init__(self, tag_id: str, anchors: dict[str, tuple[float, float, float]]):
         self.id = tag_id
-        self.x = random.uniform(*WALK_X)
-        self.y = random.uniform(*WALK_Y)
-        self.target = (random.uniform(*WALK_X), random.uniform(*WALK_Y))
+        self.anchors = anchors
+        self.walk_x = (min(a[0] for a in anchors.values()), max(a[0] for a in anchors.values()))
+        self.walk_y = (min(a[1] for a in anchors.values()), max(a[1] for a in anchors.values()))
+        self.x = random.uniform(*self.walk_x)
+        self.y = random.uniform(*self.walk_y)
+        self.target = (random.uniform(*self.walk_x), random.uniform(*self.walk_y))
         self.speed = random.uniform(0.6, 1.2)
 
     def step(self, dt: float) -> None:
@@ -37,7 +32,7 @@ class WalkingTag:
         distance = math.hypot(dx, dy)
         if distance < 0.3:
             if random.random() < 0.3:
-                self.target = (random.uniform(*WALK_X), random.uniform(*WALK_Y))
+                self.target = (random.uniform(*self.walk_x), random.uniform(*self.walk_y))
             return
         movement = min(self.speed * dt, distance)
         self.x += dx / distance * movement
@@ -45,11 +40,11 @@ class WalkingTag:
 
     def cycle(self, sequence: int) -> dict:
         ranges = []
-        for anchor, (ax, ay, az) in ANCHORS.items():
-            real = math.sqrt((self.x - ax) ** 2 + (self.y - ay) ** 2 + (az - TAG_HEIGHT) ** 2)
+        for anchor, (ax, ay, az) in self.anchors.items():
+            real = math.sqrt((self.x - ax) ** 2 + (self.y - ay) ** 2 + (az - config.TAG_HEIGHT) ** 2)
             ranges.append({
                 "anchor": anchor,
-                "distance": round(real + random.gauss(0, NOISE_STD), 3),
+                "distance": max(0.001, round(real + random.gauss(0, NOISE_STD), 3)),
                 "rssi": round(random.uniform(-85, -70), 1),
             })
         return {
@@ -61,11 +56,16 @@ class WalkingTag:
 
 
 def main() -> None:
+    with psycopg.connect(config.DATABASE_URL) as db, db.cursor() as cur:
+        cur.execute("SELECT id, x, y, z FROM anchors WHERE id IN ('A0', 'A1', 'A2', 'A3') ORDER BY id")
+        anchors = {row[0]: tuple(row[1:]) for row in cur.fetchall()}
+    if len(anchors) != 4 or not all(math.isfinite(v) for xyz in anchors.values() for v in xyz):
+        raise ValueError("Se necesitan coordenadas finitas de A0-A3 en PostgreSQL")
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    client.connect(MQTT_HOST, 1883)
+    client.connect(config.MQTT_HOST, config.MQTT_PORT)
     client.loop_start()
-    tag = WalkingTag("T0")
-    print(f"Simulando T0 con 4 anchors -> mqtt://{MQTT_HOST}/{TOPIC} (Ctrl+C para parar)")
+    tag = WalkingTag("T0", anchors)
+    print(f"Simulando T0 con 4 anchors -> mqtt://{config.MQTT_HOST}:{config.MQTT_PORT}/{config.TOPIC_RANGES} (Ctrl+C para parar)")
 
     last = time.time()
     sequence = 0
@@ -73,7 +73,7 @@ def main() -> None:
         now = time.time()
         tag.step(now - last)
         last = now
-        client.publish(TOPIC, json.dumps(tag.cycle(sequence)))
+        client.publish(config.TOPIC_RANGES, json.dumps(tag.cycle(sequence)))
         sequence = (sequence + 1) % 256
         time.sleep(UPDATE_PERIOD)
 
