@@ -1,5 +1,20 @@
 .env
+.env.*
+!.env.example
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local editor files and temporary output
+.idea/
+/tmp/
+*.log
+.DS_Store
+Thumbs.db
