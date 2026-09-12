@@ -22,7 +22,7 @@ if not math.isfinite(TAG_HEIGHT):
 if MIN_ANCHORS < 3:
     raise ValueError("RTLS_MIN_ANCHORS debe ser >= 3 para posicionar en 2D")
 RANGE_HEIGHT_TOLERANCE = float(os.getenv("RTLS_RANGE_HEIGHT_TOLERANCE", "0.1"))
-MAX_RMS = float(os.getenv("RTLS_MAX_RMS", "1.5"))
+MAX_RMS = float(os.getenv("RTLS_MAX_RMS", "1.0"))
 if not math.isfinite(RANGE_HEIGHT_TOLERANCE) or RANGE_HEIGHT_TOLERANCE < 0:
     raise ValueError("RTLS_RANGE_HEIGHT_TOLERANCE debe ser finita y >= 0")
 if not math.isfinite(MAX_RMS) or MAX_RMS <= 0:

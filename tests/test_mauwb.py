@@ -100,15 +100,30 @@ class MaUWBTest(unittest.TestCase):
                 np.testing.assert_allclose(actual, point, atol=1e-5)
                 self.assertLess(rms, 1e-5)
 
-    def test_ambiguous_outlier_is_rejected_and_raw_ranges_preserved(self):
+    @patch.object(config, "MAX_RMS", 1.0)
+    def test_fit_below_one_metre_is_accepted_and_raw_ranges_preserved(self):
         self.engine._handle_cycle(cycle())
-        before = self.engine.filters["T0"].x.copy()
         payload = cycle(sequence=2)
         horizontal = [3.15534034, 5.68642585, 3.88428194, 5.20985108]
         for item, distance in zip(payload["ranges"], horizontal):
             dz = ANCHORS[item["anchor"]][2] - config.TAG_HEIGHT
             item["distance"] = float(np.hypot(distance, dz))
         self.engine._handle_cycle(payload)
+        self.assertEqual(self.engine.mqtt.publish.call_count, 2)
+        published = json.loads(self.engine.mqtt.publish.call_args.args[1])
+        self.assertAlmostEqual(published["quality"], 0.885, places=3)
+        self.assertEqual(published["n_anchors"], 4)
+        stored = self.db.cursor.return_value.__enter__.return_value.executemany.call_args.args[1]
+        self.assertEqual(len(stored), 4)
+
+    @patch.object(config, "MAX_RMS", 1.0)
+    def test_one_metre_rms_limit_is_inclusive(self):
+        with patch("rtls.engine.trilaterate", return_value=(np.array([4., 2.]), 1.0)):
+            self.engine._handle_cycle(cycle())
+        self.engine.mqtt.publish.assert_called_once()
+        before = self.engine.filters["T0"].x.copy()
+        with patch("rtls.engine.trilaterate", return_value=(np.array([5., 3.]), 1.000001)):
+            self.engine._handle_cycle(cycle(sequence=2))
         self.engine.mqtt.publish.assert_called_once()
         np.testing.assert_array_equal(self.engine.filters["T0"].x, before)
         stored = self.db.cursor.return_value.__enter__.return_value.executemany.call_args.args[1]

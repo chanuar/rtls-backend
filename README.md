@@ -281,7 +281,10 @@ El motor y la API aceptan estas variables principales:
 - `RTLS_TAG_HEIGHT` (1.0 m por defecto).
 - `RTLS_RANGE_HEIGHT_TOLERANCE` (0.1 m): tolerancia de ruido cuando la distancia
   medida es menor que la separación vertical. Ajustar con medidas reales.
-- `RTLS_MAX_RMS` (0.5 m): residuo máximo aceptado antes de actualizar el filtro.
+- `RTLS_MAX_RMS` (1.0 m): residuo máximo aceptado antes de actualizar el filtro.
+  Se acepta RMS <= 1.0 m y se rechaza RMS > 1.0 m por defecto. Es el residuo
+  del ajuste, no un límite de distancia entre tag y anchor ni una garantía de
+  precisión de 1 m. La variable de entorno permite ajustar este umbral.
 - `RTLS_KF_PROCESS_NOISE` y `RTLS_KF_MEAS_NOISE` para el filtro.
 
 El motor relee las coordenadas antes de cada mensaje y reinicia los filtros y
