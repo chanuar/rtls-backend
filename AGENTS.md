@@ -55,5 +55,5 @@ For meaningful logic changes, add the smallest regression check that fails for t
 - Schema initialization runs only on a new PostgreSQL volume. Use an explicit migration for existing data. `docker compose down -v` destroys the database; do not use it as routine troubleshooting.
 - Current broker/database defaults are for a controlled development environment. Do not broaden network access as part of a routine fix. Security work must cover REST, WebSocket and MQTT, not just frontend controls or CORS.
 - For an audit, report severity, trigger, evidence, impact and a concrete next check; distinguish observed behavior from inference. Do not silently turn an audit into a remediation project.
-- Update the relevant README when behavior or commands change. Report checks actually run and unresolved limitations. Commit/push only when the task authorizes it.
- 
+- Before editing a README, ask yourself: does someone installing, configuring or using the project need this information to complete a task or understand its behavior? Update it only when the answer is yes. Keep agent permissions, internal workflows, implementation notes and work summaries out of the README; put necessary agent instructions in AGENTS.md and report completed work in the response. Do not add documentation merely because a file or command changed.
+- Report checks actually run and unresolved limitations. Commit/push only when the task authorizes it.

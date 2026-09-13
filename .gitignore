@@ -15,6 +15,9 @@ htmlcov/
 
 # Local editor files and temporary output
 .idea/
+.codex/
+.claude/
+.opencode/
 /tmp/
 *.log
 .DS_Store
