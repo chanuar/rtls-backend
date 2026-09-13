@@ -25,7 +25,10 @@ porque publicarían medidas duplicadas.
 
 ## Puesta en marcha del backend
 
-Requisitos: Docker, Python 3.10 o superior y un cable USB de datos para A0.
+Requisitos: Docker Compose y **Python 3.14.7**. Para usar las placas,
+necesitas un cable USB de datos para A0.
+
+Docker Compose arranca PostgreSQL y Mosquitto. Con Python 3.14.7 seleccionado:
 
 ```bash
 docker compose up -d
@@ -37,14 +40,18 @@ Activar el entorno e instalar dependencias:
 ```powershell
 # Windows PowerShell
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.lock.txt
 ```
 
 ```bash
 # Linux/macOS
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
+
+`requirements.lock.txt` fija todas las dependencias para Windows x64.
+En Linux/macOS se usa `requirements.txt` para resolver las dependencias
+específicas del sistema; la instalación en esas plataformas no se ha verificado.
 
 Arrancar, en terminales separadas:
 
@@ -257,6 +264,7 @@ Ejecutar la comprobación incluida:
 
 ```bash
 python -m unittest discover -s tests -v
+python -m pip check
 ```
 
 ## ¿Deben estar conectados al mismo ordenador?
