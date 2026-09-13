@@ -15,6 +15,16 @@
 - Frontend: geometry/flags in `src/config.ts`; replay/statistics in `src/lib/trajectory.ts`; transparent analysis rules in `src/lib/insights.ts`. No LLM or `/insights` endpoint is implemented.
 - Reuse this stack and existing helpers. Trace all callers before fixing a shared function. Prefer a focused change and an existing dependency or native control over a new abstraction.
 
+## Coding style
+
+- Organize code by feature/domain and clear responsibility. Keep related behavior together and dependencies narrow. Split modules when responsibilities diverge, not merely to create more files; avoid generic type-based layers and speculative abstractions.
+- Aim for functions under 50 lines and files under 800 lines. Treat 200-400 lines as a rough file-size guide, not a minimum. Prefer guard clauses to nesting beyond four control-flow levels. These are review signals, not reasons to split a cohesive algorithm or test into artificial helpers.
+- Treat shared state and function inputs as immutable. Create new objects/collections when updating shared state; local mutation of newly created data is fine. Allow mutation in explicitly stateful components with clear ownership, such as filters and connection lifecycles. Rejected operations must not partially mutate accepted state.
+- Handle errors where recovery, cleanup or useful context can be added; otherwise propagate them. Catch specific exceptions when possible. Give users clear, actionable messages and log useful server-side context without credentials or sensitive location payloads. Do not silently swallow unexpected failures or log the same error at every layer; handle expected disconnects and optional-data absence deliberately.
+- Validate external data at system boundaries, including API/MQTT/serial input, configuration and responses consumed by the UI. Check shapes, types, finite numbers, allowed ranges and timestamp relationships before updating state. Prefer schema-based validation for structured payloads using existing tools; focused manual parsers are valid for simple or hardware-specific formats. Type annotations and assertions are not runtime validation. Reject invalid input with a clear reason; do not invent replacement data.
+- Keep deployment settings and physical calibration adjustable. Use named constants for meaningful fixed limits and units; clear algorithmic literals are fine. Do not turn every literal into configuration or remove calibration knobs to simplify code.
+- Use readable names that express domain meaning and units where relevant. Before finishing, review the touched code for focused responsibilities, unnecessary nesting, shared-state mutation, error paths, boundary validation and unexplained constants. Add the smallest meaningful regression check for logic changes; do not refactor unrelated code just to satisfy this checklist.
+
 ## Contracts to preserve
 
 - Coordinates and distances use metres. X is depth from the entrance; Y is width; Z is height. Surveyed anchor coordinates live in PostgreSQL, while zones are currently frontend constants.
